@@ -1,10 +1,11 @@
-// Sketch to use an Arduino as tempcontroller 
+// Sketch to use an Arduino as tempcontroller
 // in an Expobar Brewtus II espresso machine
 
 //--> Import libraries <--
 #include <OneWire.h>
 #include <DallasTemperature.h>
 #include <LiquidCrystal.h>
+#include <PID_v1.h>
 
 
 //--> Setup variables <--
@@ -18,13 +19,21 @@ int tempPin = 12;
 
 // Timing
 long previousMillis = 0;
-long tempInterval = 2000;
+long tempInterval = 1000;
+
+// PID
+double setpoint = 95;
+double input = 0;
+double oldInput = 0;
+double output;
+int windowSize = 5000;
+unsigned long windowStartTime;
 
 // Defaults
 int displayMode = 0;
 float temp = 0;
 float oldTemp = 0;
-boolean relayStatus = false;
+boolean relayStatus = true;
 boolean oldRelayStatus = false;
 boolean refreshDisplay = true;
 
@@ -57,7 +66,7 @@ byte off[8] = {
 // Setup a oneWire instance to communicate with any OneWire devices
 OneWire oneWire(ONE_WIRE_BUS);
 
-// Pass our oneWire reference to Dallas Temperature. 
+// Pass our oneWire reference to Dallas Temperature.
 DallasTemperature sensors(&oneWire);
 DeviceAddress tempProbe = { 0x28, 0x2D, 0x48, 0x4E, 0x05, 0x00, 0x00, 0xF5 };
 //DeviceAddress tempProbe = { 0x28, 0xFF, 0x70, 0xFC, 0x10, 0x14, 0x00, 0xDB };
@@ -65,32 +74,41 @@ DeviceAddress tempProbe = { 0x28, 0x2D, 0x48, 0x4E, 0x05, 0x00, 0x00, 0xF5 };
 // Initialize LCD display
 LiquidCrystal lcd(5, 4, 0, 1, 2, 3);
 
+// Setup PID
+#define RelayPin 11
+PID myPID(&input, &output, &setpoint,1600,8,0, DIRECT);
+
 
 //--> Arduino Setup <--
 
 void setup(void)
 {
-  // Setup the LCD 
+  // Setup the LCD
   lcd.begin(16, 2);
   lcd.createChar(1, on);
   lcd.createChar(2, off);
   // Print startup message to LCD
   lcd.clear();
   lcd.print("-= Brewtus II =-");
-  
+
   // start serial port
-  //Serial.begin(9600);
-  
+  Serial.begin(9600);
+
   // Setup relay pin
   pinMode(relayPin, OUTPUT);
-  
+
   // Start up the sensors library
   sensors.begin();
   // set the resolution to 10 bit
-  sensors.setResolution(tempProbe, 10);
+  sensors.setResolution(tempProbe, 12);
+
+  // Setup PID
+  windowStartTime = millis();
+  myPID.SetOutputLimits(0, windowSize);
+  myPID.SetMode(AUTOMATIC);
 
   // Add a delay to show the "boot screen"
-  delay(2000);  
+  delay(2000);
 }
 
 
@@ -130,20 +148,20 @@ boolean controlRelay(float currentTemp, float targetTemp){
   }
 }
 
-void printDisplay(int mode){
+void printDisplay(int mode, double temp, boolean relayStatus){
   if (mode == 0){
     lcd.clear();
     lcd.print("Temp: ");
     if (temp == 0.00) {
       lcd.print("Read Error");
-    } 
+    }
     else {
       lcd.print(temp);
       lcd.print((char)223);
     }
     lcd.setCursor(0,1);
     lcd.print(" Set: ");
-    lcd.print(desiredTemp, 0);
+    lcd.print(setpoint, 0);
     lcd.print((char)223);
     lcd.print(" Heat:");
     if (relayStatus == true){
@@ -160,27 +178,61 @@ void printDisplay(int mode){
 //--> Arduino Main Loop <--
 
 void loop(void){
-  unsigned long currentMillis = millis();
-  
-  // Is it time to check the temp?
-  if(currentMillis - previousMillis > tempInterval) {
-    previousMillis = currentMillis;
-    
-    temp = checkTemp();
-    relayStatus = controlRelay(temp, desiredTemp);
-    
-    if (temp != oldTemp){
-      refreshDisplay = true;
-      oldTemp = temp;
-    }
-    else if (relayStatus != oldRelayStatus){
-      refreshDisplay = true;
-      oldRelayStatus = relayStatus;
-    }
-  }
-  
-  if (refreshDisplay == true){
-    printDisplay(displayMode);
-  }
-}
+//  unsigned long currentMillis = millis();
+//
+//  // Is it time to check the temp?
+//  if(currentMillis - previousMillis > tempInterval) {
+//    previousMillis = currentMillis;
+//
+//    temp = checkTemp();
+//    relayStatus = controlRelay(temp, desiredTemp);
+//
+//    if (temp != oldTemp){
+//      refreshDisplay = true;
+//      oldTemp = temp;
+//    }
+//    else if (relayStatus != oldRelayStatus){
+//      refreshDisplay = true;
+//      oldRelayStatus = relayStatus;
+//    }
+//  }
+//
+//  if (refreshDisplay == true){
+//    printDisplay(displayMode);
+//  }
 
+  // PID
+  oldInput = input;
+  input = checkTemp();
+  myPID.Compute();
+
+  /************************************************
+   * turn the output pin on/off based on pid output
+   ************************************************/
+  unsigned long now = millis();
+  if (now - windowStartTime > windowSize){
+    //time to shift the Relay Window
+    windowStartTime += windowSize;
+  }
+  oldRelayStatus = relayStatus;
+  if (input == 0.00){
+    digitalWrite(RelayPin,LOW);
+    relayStatus = false;
+  }
+  else if (output > now - windowStartTime){
+    digitalWrite(RelayPin,HIGH);
+    relayStatus = true;
+  }
+  else {
+    digitalWrite(RelayPin,LOW);
+    relayStatus = false;
+  }
+
+  if (relayStatus != oldRelayStatus){
+    printDisplay(displayMode, input, relayStatus);
+  }
+  if (input != oldInput){
+    printDisplay(displayMode, input, relayStatus);
+  }
+
+}
