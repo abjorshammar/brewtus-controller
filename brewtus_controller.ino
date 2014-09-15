@@ -20,9 +20,11 @@ int tempPin = 12;
 // Timing
 long previousMillis = 0;
 long tempInterval = 1000;
+long serialPrintTime = 5000;
+long currentTime = 0;
 
 // PID
-double setpoint = 95;
+double setpoint = 93;
 double input = 0;
 double oldInput = 0;
 double output;
@@ -76,7 +78,7 @@ LiquidCrystal lcd(5, 4, 0, 1, 2, 3);
 
 // Setup PID
 #define RelayPin 11
-PID myPID(&input, &output, &setpoint,1600,8,0, DIRECT);
+PID myPID(&input, &output, &setpoint,800,0,0, DIRECT);
 
 
 //--> Arduino Setup <--
@@ -115,34 +117,24 @@ void setup(void)
 //--> Functions <--
 
 float checkTemp(){
-  Serial.print("Getting temperature...\n\r");
   sensors.requestTemperatures();
-  Serial.print("Temperature is: ");
   float tempRead = sensors.getTempC(tempProbe);
   if (tempRead == -127.00) {
-    Serial.print("Error getting temperature");
     return 0.00;
-  } else {
-    Serial.print("C: ");
-    Serial.print(tempRead);
-  }
-  Serial.print("\n\r\n\r");
+  } 
   return tempRead;
 }
 
 boolean controlRelay(float currentTemp, float targetTemp){
   if (currentTemp == 0.00){
-    Serial.println("Heater OFF");
     digitalWrite(relayPin, LOW);
     return false;
   }
   else if (currentTemp >= targetTemp - 0.5){
-    Serial.println("Heater OFF");
     digitalWrite(relayPin, LOW);
     return false;
   }
   else if (currentTemp <= targetTemp - 0.75){
-    Serial.println("Heater ON");
     digitalWrite(relayPin, HIGH);
     return true;
   }
@@ -210,9 +202,19 @@ void loop(void){
    * turn the output pin on/off based on pid output
    ************************************************/
   unsigned long now = millis();
+
+  if(now - previousMillis > serialPrintTime) {
+    previousMillis = now;
+    currentTime = currentTime + serialPrintTime / 1000;
+    Serial.print(currentTime);
+    Serial.print(",");
+    Serial.print(input);    
+    Serial.print("\n");
+  }
+
   if (now - windowStartTime > windowSize){
     //time to shift the Relay Window
-    windowStartTime += windowSize;
+    windowStartTime += windowSize;                   
   }
   oldRelayStatus = relayStatus;
   if (input == 0.00){
